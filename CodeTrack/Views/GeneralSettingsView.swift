@@ -249,7 +249,7 @@ struct GeneralSettingsView: View {
       guard response == .OK, let url = panel.url, let configManager = configManager else { return }
 
       print("🔄 File selected: \(url.path)")
-      d
+      
       guard url.startAccessingSecurityScopedResource() else {
         print("❌ Failed to start accessing security-scoped resource")
         return
