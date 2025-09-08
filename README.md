@@ -120,7 +120,7 @@ Each threshold can be adjusted for both time duration and color representation.
 CodeTrack is in active development! Upcoming features include:
 
 - 📊 Enhanced analytics and insights
-- 🔄 Multi-IDE support beyond Cursor
+- 🔄 Multi-IDE support beyond VSCode-based IDEs
 - 📈 Detailed reporting and export options
 - 🎨 Additional visualization styles
 - ⚡ Performance optimizations
