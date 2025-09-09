@@ -6,17 +6,19 @@
 //
 
 import SwiftUI
+import WidgetKit
 
 struct ContributionGridView: View {
   let usageDays: [UsageDay]
   let daysToShow: Int
+  let widgetFamily: WidgetFamily
 
   var body: some View {
     GeometryReader { geometry in
       let totalWidth = geometry.size.width
       let totalHeight = geometry.size.height
 
-      let totalDays = daysToShow
+      let totalDays = getOptimalDaysCount()
       let aspectRatio = totalWidth / totalHeight
 
       let (rows, cols) = calculateOptimalGrid(totalDays: totalDays, aspectRatio: aspectRatio)
@@ -88,12 +90,26 @@ struct ContributionGridView: View {
     return (bestRows, bestCols)
   }
 
+  private func getOptimalDaysCount() -> Int {
+    switch widgetFamily {
+    case .systemSmall:
+      return min(daysToShow, 49) // 7x7 maximum
+    case .systemMedium:
+      return min(daysToShow, 91) // ~13x7 maximum
+    case .systemLarge:
+      return daysToShow // Show all days
+    default:
+      return daysToShow
+    }
+  }
+
   private func getDayData(for dayIndex: Int) -> UsageDay {
     let calendar = Calendar.current
     let today = Date()
+    let totalDays = getOptimalDaysCount()
 
     guard
-      let targetDate = calendar.date(byAdding: .day, value: -(daysToShow - 1 - dayIndex), to: today)
+      let targetDate = calendar.date(byAdding: .day, value: -(totalDays - 1 - dayIndex), to: today)
     else {
       return UsageDay(date: today, seconds: 0, intensityLevel: .none)
     }

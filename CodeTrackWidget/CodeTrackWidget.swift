@@ -46,11 +46,13 @@ struct SimpleEntry: TimelineEntry {
 
 struct CodeTrackWidgetEntryView: View {
   var entry: Provider.Entry
+  @Environment(\.widgetFamily) var family
 
   var body: some View {
     ContributionGridView(
       usageDays: entry.usageDays,
-      daysToShow: entry.daysToShow
+      daysToShow: entry.daysToShow,
+      widgetFamily: family
     )
     .padding(4)
   }
@@ -66,6 +68,6 @@ struct CodeTrackWidget: Widget {
     }
     .configurationDisplayName("Code Usage")
     .description("Track your daily coding activity")
-    .supportedFamilies([.systemSmall, .systemMedium])
+    .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
   }
 }
