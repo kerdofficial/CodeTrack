@@ -12,7 +12,7 @@ struct CodeTrackApp: App {
   @StateObject private var appState = AppState()
 
   var body: some Scene {
-    MenuBarExtra("CodeTrack", systemImage: "chart.bar") {
+    MenuBarExtra("CodeTrack", systemImage: "square.grid.3x3.square") {
         SettingsMenuContent()
           .environmentObject(appState)
     }
