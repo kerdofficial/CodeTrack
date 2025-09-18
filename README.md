@@ -47,7 +47,7 @@
 
 ## 🚀 Installation
 
-1. **Download** the latest release from the releases page
+1. **Download** the latest release from the releases page (SOON)
 2. **Install** CodeTrack.app to your Applications folder
 3. **Launch** the application - it will appear in your menu bar
 4. **Configure** your settings via the menu bar dropdown → "Open CodeTrack Settings"
