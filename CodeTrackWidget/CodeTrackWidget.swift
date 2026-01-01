@@ -8,37 +8,40 @@
 import SwiftUI
 import WidgetKit
 
-struct Provider: AppIntentTimelineProvider {
+struct Provider: TimelineProvider {
   func placeholder(in context: Context) -> SimpleEntry {
     SimpleEntry(
       date: Date(),
       usageDays: DataManager.shared.loadUsageData(),
-      configuration: ConfigurationAppIntent()
+      daysToShow: DataManager.shared.getDaysToShow()
     )
   }
 
-  func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> SimpleEntry {
-    SimpleEntry(
+  func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> Void) {
+    let entry = SimpleEntry(
       date: Date(),
       usageDays: DataManager.shared.loadUsageData(),
-      configuration: configuration
+      daysToShow: DataManager.shared.getDaysToShow()
     )
+    completion(entry)
   }
 
-  func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<SimpleEntry> {
+  func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
     let currentDate = Date()
     let usageData = DataManager.shared.loadUsageData()
-    let entry = SimpleEntry(date: currentDate, usageDays: usageData, configuration: configuration)
+    let daysCount = DataManager.shared.getDaysToShow()
+    let entry = SimpleEntry(date: currentDate, usageDays: usageData, daysToShow: daysCount)
 
     let nextUpdate = Calendar.current.date(byAdding: .hour, value: 1, to: currentDate)!
-    return Timeline(entries: [entry], policy: .after(nextUpdate))
+    let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
+    completion(timeline)
   }
 }
 
 struct SimpleEntry: TimelineEntry {
   let date: Date
   let usageDays: [UsageDay]
-  let configuration: ConfigurationAppIntent
+  let daysToShow: Int
 }
 
 struct CodeTrackWidgetEntryView: View {
@@ -46,30 +49,11 @@ struct CodeTrackWidgetEntryView: View {
   @Environment(\.widgetFamily) var family
 
   var body: some View {
-    Group {
-      switch entry.configuration.viewType {
-      case .grid:
-        ContributionGridView(
-          usageDays: entry.usageDays,
-          daysToShow: entry.configuration.daysToShow,
-          widgetFamily: family
-        )
-      case .chart:
-        if family == .systemSmall {
-          // Chart not available in small size, show grid instead
-          ContributionGridView(
-            usageDays: entry.usageDays,
-            daysToShow: entry.configuration.daysToShow,
-            widgetFamily: family
-          )
-        } else {
-          ChartView(
-            usageDays: entry.usageDays,
-            widgetFamily: family
-          )
-        }
-      }
-    }
+    ContributionGridView(
+      usageDays: entry.usageDays,
+      daysToShow: entry.daysToShow,
+      widgetFamily: family
+    )
     .padding(4)
   }
 }
@@ -78,12 +62,12 @@ struct CodeTrackWidget: Widget {
   let kind: String = "CodeTrackWidget"
 
   var body: some WidgetConfiguration {
-    AppIntentConfiguration(kind: kind, intent: ConfigurationAppIntent.self, provider: Provider()) { entry in
+    StaticConfiguration(kind: kind, provider: Provider()) { entry in
       CodeTrackWidgetEntryView(entry: entry)
         .containerBackground(.background, for: .widget)
     }
     .configurationDisplayName("Code Usage")
-    .description("Track your daily coding activity with grid or chart view")
+    .description("Track your daily coding activity")
     .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
   }
 }

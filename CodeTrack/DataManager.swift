@@ -40,34 +40,110 @@ class DataManager {
 
   func copyOriginalDataToSharedContainer() -> Bool {
     let configManager = ConfigurationManager()
-
-    if let result = configManager.accessSecureFile(operation: { url -> Bool in
-      do {
-        let originalData = try Data(contentsOf: url)
-        let codingData = try JSONDecoder().decode(CodingTimeData.self, from: originalData)
-        return processAndStoreData(codingData)
-      } catch {
-        print("❌ CodeTrack: Error reading data with bookmark: \(error)")
-        return false
-      }
-    }) {
-      return result
+    let enabledSources = configManager.configuration.enabledDataSources
+    
+    guard !enabledSources.isEmpty else {
+      print("⚠️ CodeTrack: No enabled data sources")
+      return false
     }
-
-    if !originalFilePath.isEmpty {
-      do {
-        let originalData = try Data(contentsOf: URL(fileURLWithPath: originalFilePath))
-        let codingData = try JSONDecoder().decode(CodingTimeData.self, from: originalData)
-        return processAndStoreData(codingData)
-      } catch {
-        print("❌ CodeTrack: Error processing data with direct path: \(error)")
+    
+    print("📊 CodeTrack: Processing \(enabledSources.count) data source(s)")
+    
+    var allCodingData: [CodingTimeData] = []
+    var successCount = 0
+    
+    // Load data from all enabled sources
+    for source in enabledSources {
+      print("📂 CodeTrack: Loading data from '\(source.name)'")
+      
+      if let result = configManager.accessSecureFile(dataSourceId: source.id, operation: { url -> CodingTimeData? in
+        do {
+          let data = try Data(contentsOf: url)
+          let codingData = try JSONDecoder().decode(CodingTimeData.self, from: data)
+          print("✅ CodeTrack: Successfully loaded data from '\(source.name)'")
+          return codingData
+        } catch {
+          print("❌ CodeTrack: Error reading data from '\(source.name)': \(error)")
+          return nil
+        }
+      }), let codingData = result {
+        allCodingData.append(codingData)
+        successCount += 1
       }
-    } else {
-      print("⚠️ CodeTrack: No file path configured")
     }
-
-    print("❌ CodeTrack: No valid file access method available")
-    return false
+    
+    guard successCount > 0 else {
+      print("❌ CodeTrack: Failed to load data from any source")
+      return false
+    }
+    
+    print("✅ CodeTrack: Successfully loaded data from \(successCount)/\(enabledSources.count) source(s)")
+    
+    // Merge all data sources
+    let mergedData = mergeCodingTimeData(allCodingData)
+    return processAndStoreData(mergedData)
+  }
+  
+  private func mergeCodingTimeData(_ dataArray: [CodingTimeData]) -> CodingTimeData {
+    guard !dataArray.isEmpty else {
+      return CodingTimeData(dailyData: [:])
+    }
+    
+    if dataArray.count == 1 {
+      return dataArray[0]
+    }
+    
+    print("🔄 CodeTrack: Merging \(dataArray.count) data sources")
+    
+    var mergedDailyData: [String: DailyUsage] = [:]
+    
+    // Merge all daily data
+    for codingData in dataArray {
+      for (dateKey, dailyUsage) in codingData.dailyData {
+        if let existing = mergedDailyData[dateKey] {
+          // Merge with existing data for this date
+          let mergedTotalTime = existing.totalTime + dailyUsage.totalTime
+          
+          // Merge language times
+          var mergedLanguageTime = existing.languageTime ?? [:]
+          if let languageTime = dailyUsage.languageTime {
+            for (lang, time) in languageTime {
+              mergedLanguageTime[lang, default: 0] += time
+            }
+          }
+          
+          // Merge repo times
+          var mergedRepoTime = existing.repoTime ?? [:]
+          if let repoTime = dailyUsage.repoTime {
+            for (repo, time) in repoTime {
+              mergedRepoTime[repo, default: 0] += time
+            }
+          }
+          
+          // Merge file times
+          var mergedFileTime = existing.fileTime ?? [:]
+          if let fileTime = dailyUsage.fileTime {
+            for (file, time) in fileTime {
+              mergedFileTime[file, default: 0] += time
+            }
+          }
+          
+          mergedDailyData[dateKey] = DailyUsage(
+            totalTime: mergedTotalTime,
+            languageTime: mergedLanguageTime.isEmpty ? nil : mergedLanguageTime,
+            repoTime: mergedRepoTime.isEmpty ? nil : mergedRepoTime,
+            fileTime: mergedFileTime.isEmpty ? nil : mergedFileTime
+          )
+        } else {
+          // First entry for this date
+          mergedDailyData[dateKey] = dailyUsage
+        }
+      }
+    }
+    
+    print("✅ CodeTrack: Merged data contains \(mergedDailyData.count) days")
+    
+    return CodingTimeData(dailyData: mergedDailyData)
   }
 
   private func processAndStoreData(_ codingData: CodingTimeData) -> Bool {

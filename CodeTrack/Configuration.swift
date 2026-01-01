@@ -8,10 +8,30 @@
 import Foundation
 import SwiftUI
 
+struct DataSource: Identifiable, Codable {
+  let id: UUID
+  var name: String
+  var filePath: String
+  var fileBookmark: Data?
+  var isEnabled: Bool
+  
+  init(id: UUID = UUID(), name: String = "", filePath: String = "", fileBookmark: Data? = nil, isEnabled: Bool = true) {
+    self.id = id
+    self.name = name
+    self.filePath = filePath
+    self.fileBookmark = fileBookmark
+    self.isEnabled = isEnabled
+  }
+}
+
 struct AppConfiguration: Codable {
   var daysCount: DaysCount = .thirty
+  var dataSources: [DataSource] = []
+  
+  // Legacy properties for migration
   var filePath: String = ""
   var fileBookmark: Data?
+  
   var isFirstLaunch: Bool = true
   var thresholds: [Threshold] = Threshold.defaultThresholds
   var startWithSystem: Bool = false
@@ -32,11 +52,20 @@ struct AppConfiguration: Codable {
 
   enum CodingKeys: String, CodingKey {
     case daysCount
+    case dataSources
     case filePath
     case fileBookmark
     case isFirstLaunch
     case thresholds
     case startWithSystem
+  }
+  
+  var hasConfiguredDataSources: Bool {
+    return !dataSources.isEmpty && dataSources.contains { !$0.filePath.isEmpty && $0.fileBookmark != nil }
+  }
+  
+  var enabledDataSources: [DataSource] {
+    return dataSources.filter { $0.isEnabled && !$0.filePath.isEmpty && $0.fileBookmark != nil }
   }
 }
 
@@ -133,14 +162,25 @@ class ConfigurationManager: ObservableObject {
     do {
       configuration = try JSONDecoder().decode(AppConfiguration.self, from: data)
       print("✅ Configuration loaded")
-      print("🔍 Debug - filePath: '\(configuration.filePath)'")
+      print("🔍 Debug - dataSources count: \(configuration.dataSources.count)")
       print("🔍 Debug - isFirstLaunch: \(configuration.isFirstLaunch)")
-      print("🔍 Debug - hasBookmark: \(configuration.fileBookmark != nil)")
-      if let bookmark = configuration.fileBookmark {
-        print("🔍 Debug - bookmark size: \(bookmark.count) bytes")
+      
+      // Migrate legacy single file path to data sources
+      if !configuration.filePath.isEmpty && configuration.fileBookmark != nil && configuration.dataSources.isEmpty {
+        print("🔄 Migrating legacy file path to data sources")
+        let legacySource = DataSource(
+          name: "Primary Data Source",
+          filePath: configuration.filePath,
+          fileBookmark: configuration.fileBookmark,
+          isEnabled: true
+        )
+        configuration.dataSources.append(legacySource)
+        configuration.filePath = ""
+        configuration.fileBookmark = nil
+        saveConfiguration()
       }
 
-      if !configuration.filePath.isEmpty && configuration.fileBookmark != nil {
+      if configuration.hasConfiguredDataSources {
         configuration.isFirstLaunch = false
       }
 
@@ -170,11 +210,22 @@ class ConfigurationManager: ObservableObject {
     }
 
     let legacy = try decoder.decode(LegacyAppConfiguration.self, from: data)
+    
+    var dataSources: [DataSource] = []
+    if !legacy.filePath.isEmpty {
+      dataSources.append(DataSource(
+        name: "Primary Data Source",
+        filePath: legacy.filePath,
+        fileBookmark: legacy.fileBookmark,
+        isEnabled: true
+      ))
+    }
 
     return AppConfiguration(
       daysCount: legacy.daysCount,
-      filePath: legacy.filePath,
-      fileBookmark: legacy.fileBookmark,
+      dataSources: dataSources,
+      filePath: "",
+      fileBookmark: nil,
       isFirstLaunch: legacy.filePath.isEmpty,
       thresholds: legacy.thresholds,
       startWithSystem: legacy.startWithSystem
@@ -195,7 +246,7 @@ class ConfigurationManager: ObservableObject {
     }
   }
 
-  func saveFileBookmark(for url: URL) {
+  func saveFileBookmark(for url: URL, dataSourceId: UUID? = nil) {
     print("🔄 Creating bookmark for: \(url.path)")
 
     do {
@@ -207,8 +258,23 @@ class ConfigurationManager: ObservableObject {
 
       print("✅ Bookmark created successfully, size: \(bookmarkData.count) bytes")
 
-      self.configuration.fileBookmark = bookmarkData
-      self.configuration.filePath = url.path
+      if let sourceId = dataSourceId, let index = self.configuration.dataSources.firstIndex(where: { $0.id == sourceId }) {
+        // Update existing data source
+        self.configuration.dataSources[index].fileBookmark = bookmarkData
+        self.configuration.dataSources[index].filePath = url.path
+        print("✅ Updated data source at index \(index)")
+      } else {
+        // Add new data source
+        let newSource = DataSource(
+          name: "Data Source \(self.configuration.dataSources.count + 1)",
+          filePath: url.path,
+          fileBookmark: bookmarkData,
+          isEnabled: true
+        )
+        self.configuration.dataSources.append(newSource)
+        print("✅ Added new data source")
+      }
+      
       self.configuration.isFirstLaunch = false
 
       print("🔄 Saving configuration with bookmark...")
@@ -219,14 +285,9 @@ class ConfigurationManager: ObservableObject {
         if let testData = self.userDefaults.data(forKey: self.configurationKey) {
           do {
             let testConfig = try JSONDecoder().decode(AppConfiguration.self, from: testData)
-            if let testBookmark = testConfig.fileBookmark {
-              print(
-                "🔍 Persistence test - bookmark found in UserDefaults, size: \(testBookmark.count) bytes"
-              )
-              print("🔍 Persistence test - filePath: '\(testConfig.filePath)'")
-              print("🔍 Persistence test - isFirstLaunch: \(testConfig.isFirstLaunch)")
-            } else {
-              print("⚠️ Persistence test FAILED - no bookmark in saved data")
+            print("🔍 Persistence test - dataSources count: \(testConfig.dataSources.count)")
+            for (index, source) in testConfig.dataSources.enumerated() {
+              print("🔍 Persistence test - Source \(index): \(source.name), enabled: \(source.isEnabled)")
             }
           } catch {
             print("⚠️ Persistence test FAILED - error decoding: \(error)")
@@ -240,13 +301,56 @@ class ConfigurationManager: ObservableObject {
       print("🔍 Bookmark creation error details: \(error.localizedDescription)")
     }
   }
+  
+  func removeDataSource(_ id: UUID) {
+    configuration.dataSources.removeAll { $0.id == id }
+    if configuration.dataSources.isEmpty {
+      configuration.isFirstLaunch = true
+    }
+    saveConfiguration()
+  }
+  
+  func updateDataSourceName(_ id: UUID, name: String) {
+    if let index = configuration.dataSources.firstIndex(where: { $0.id == id }) {
+      configuration.dataSources[index].name = name
+      saveConfiguration()
+    }
+  }
+  
+  func toggleDataSource(_ id: UUID) {
+    if let index = configuration.dataSources.firstIndex(where: { $0.id == id }) {
+      configuration.dataSources[index].isEnabled.toggle()
+      saveConfiguration()
+    }
+  }
 
   func accessSecureFile<T>(operation: (URL) throws -> T) -> T? {
-    guard let bookmarkData = configuration.fileBookmark else {
-      print("❌ No file bookmark available")
+    // Legacy support - if dataSources is empty but we have old bookmark
+    if configuration.dataSources.isEmpty, let bookmarkData = configuration.fileBookmark {
+      return accessSecureFileWithBookmark(bookmarkData: bookmarkData, operation: operation)
+    }
+    
+    // Use first enabled data source
+    if let firstSource = configuration.enabledDataSources.first,
+       let bookmarkData = firstSource.fileBookmark {
+      return accessSecureFileWithBookmark(bookmarkData: bookmarkData, operation: operation)
+    }
+    
+    print("❌ No file bookmark available")
+    return nil
+  }
+  
+  func accessSecureFile<T>(dataSourceId: UUID, operation: (URL) throws -> T) -> T? {
+    guard let source = configuration.dataSources.first(where: { $0.id == dataSourceId }),
+          let bookmarkData = source.fileBookmark else {
+      print("❌ No file bookmark available for data source")
       return nil
     }
-
+    
+    return accessSecureFileWithBookmark(bookmarkData: bookmarkData, operation: operation)
+  }
+  
+  private func accessSecureFileWithBookmark<T>(bookmarkData: Data, operation: (URL) throws -> T) -> T? {
     print("🔍 Attempting to access file using bookmark (size: \(bookmarkData.count) bytes)")
 
     do {

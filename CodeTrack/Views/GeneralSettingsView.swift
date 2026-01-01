@@ -13,6 +13,8 @@ struct GeneralSettingsView: View {
   @State private var syncStatus = "Ready"
   @State private var lastSyncTime: Date?
   @State private var showingFirstLaunchAlert = false
+  @State private var editingSourceId: UUID?
+  @State private var editingSourceName: String = ""
 
   var body: some View {
     ScrollView {
@@ -58,12 +60,15 @@ struct GeneralSettingsView: View {
           WidgetCenter.shared.reloadAllTimelines()
         }
 
-        GroupBox("Data Source") {
-          VStack(spacing: 12) {
+        GroupBox("Data Sources") {
+          VStack(spacing: 16) {
             HStack {
-              Text("Tracking Data Path:")
+              Text("Tracking Data Files")
                 .font(.headline)
               Spacer()
+              Text("\(configManager.configuration.dataSources.count)/5")
+                .foregroundColor(.secondary)
+                .font(.caption)
             }
 
             if configManager.configuration.isFirstLaunch {
@@ -72,13 +77,13 @@ struct GeneralSettingsView: View {
                   .font(.headline)
                   .foregroundColor(.orange)
 
-                Text("Please select your time tracking data file to get started.")
+                Text("Please add at least one time tracking data file to get started.")
                   .font(.caption)
                   .foregroundColor(.secondary)
                   .multilineTextAlignment(.center)
 
-                Button("Select Time Data File") {
-                  showFilePicker()
+                Button("Add Data Source") {
+                  showFilePicker(for: nil)
                 }
                 .buttonStyle(.borderedProminent)
               }
@@ -86,29 +91,67 @@ struct GeneralSettingsView: View {
               .background(Color.orange.opacity(0.1))
               .cornerRadius(8)
             } else {
-              VStack(spacing: 8) {
-                HStack {
-                  TextField("File path", text: $configManager.configuration.filePath)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(true)
-
-                  Button("Change...") {
-                    showFilePicker()
+              VStack(spacing: 12) {
+                ForEach(configManager.configuration.dataSources) { source in
+                  DataSourceRow(
+                    source: source,
+                    isEditing: editingSourceId == source.id,
+                    editingName: $editingSourceName,
+                    onToggle: {
+                      configManager.toggleDataSource(source.id)
+                      performSync()
+                      WidgetCenter.shared.reloadAllTimelines()
+                    },
+                    onEdit: {
+                      editingSourceId = source.id
+                      editingSourceName = source.name
+                    },
+                    onSaveName: {
+                      if !editingSourceName.isEmpty {
+                        configManager.updateDataSourceName(source.id, name: editingSourceName)
+                      }
+                      editingSourceId = nil
+                    },
+                    onRemove: {
+                      configManager.removeDataSource(source.id)
+                      performSync()
+                      WidgetCenter.shared.reloadAllTimelines()
+                    },
+                    onChange: {
+                      showFilePicker(for: source.id)
+                    }
+                  )
+                }
+                
+                if configManager.configuration.dataSources.count < 5 {
+                  Button(action: {
+                    showFilePicker(for: nil)
+                  }) {
+                    HStack {
+                      Image(systemName: "plus.circle.fill")
+                      Text("Add Data Source")
+                    }
                   }
                   .buttonStyle(.bordered)
                 }
-
-                Text("✅ File access configured")
-                  .font(.caption)
-                  .foregroundColor(.green)
               }
             }
 
             Text(
-              "Note: Select the codingTimeData.json file from your VSCode/Cursor time extension directory."
+              "Note: Select codingTimeData.json files from your VSCode/Cursor time extension directories. You can add up to 5 data sources."
             )
             .font(.caption)
             .foregroundColor(.secondary)
+            
+            if configManager.configuration.dataSources.count > 1 {
+              HStack {
+                Image(systemName: "info.circle")
+                  .foregroundColor(.blue)
+                Text("Data from enabled sources will be merged automatically")
+                  .font(.caption)
+                  .foregroundColor(.secondary)
+              }
+            }
           }
           .padding()
         }
@@ -157,7 +200,7 @@ struct GeneralSettingsView: View {
                 performSync()
               }
               .buttonStyle(.borderedProminent)
-              .disabled(syncStatus == "Syncing...")
+              .disabled(syncStatus == "Syncing..." || configManager.configuration.dataSources.isEmpty)
             }
           }
           .padding()
@@ -178,10 +221,6 @@ struct GeneralSettingsView: View {
     .onAppear {
       startDataSync()
     }
-    .onChange(of: configManager.configuration.isFirstLaunch) { _ in
-      DispatchQueue.main.async {
-      }
-    }
   }
 
   private func formatter(date: Date) -> String {
@@ -192,11 +231,8 @@ struct GeneralSettingsView: View {
   }
 
   private func startDataSync() {
-    if !configManager.configuration.filePath.isEmpty {
-      DataManager.shared.updateFilePath(configManager.configuration.filePath)
+    if configManager.configuration.hasConfiguredDataSources {
       DataManager.shared.startPeriodicDataSync()
-      performSync()
-    } else if !configManager.configuration.isFirstLaunch {
       performSync()
     }
   }
@@ -220,7 +256,7 @@ struct GeneralSettingsView: View {
     }
   }
 
-  private func showFilePicker() {
+  private func showFilePicker(for dataSourceId: UUID?) {
     let panel = NSOpenPanel()
     panel.title = "Select Time Tracking Data File"
     panel.message =
@@ -270,14 +306,99 @@ struct GeneralSettingsView: View {
         return
       }
 
-      configManager.saveFileBookmark(for: url)
-
-      DataManager.shared.updateFilePath(url.path)
+      configManager.saveFileBookmark(for: url, dataSourceId: dataSourceId)
 
       performSync()
 
       WidgetCenter.shared.reloadAllTimelines()
     }
+  }
+}
+
+struct DataSourceRow: View {
+  let source: DataSource
+  let isEditing: Bool
+  @Binding var editingName: String
+  let onToggle: () -> Void
+  let onEdit: () -> Void
+  let onSaveName: () -> Void
+  let onRemove: () -> Void
+  let onChange: () -> Void
+  
+  var body: some View {
+    VStack(spacing: 8) {
+      HStack {
+        Toggle("", isOn: Binding(
+          get: { source.isEnabled },
+          set: { _ in onToggle() }
+        ))
+        .labelsHidden()
+        .toggleStyle(.switch)
+        
+        VStack(alignment: .leading, spacing: 4) {
+          if isEditing {
+            TextField("Data source name", text: $editingName, onCommit: onSaveName)
+              .textFieldStyle(.roundedBorder)
+          } else {
+            Text(source.name)
+              .font(.headline)
+              .foregroundColor(source.isEnabled ? .primary : .secondary)
+          }
+          
+          Text(source.filePath)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        
+        Spacer()
+        
+        HStack(spacing: 8) {
+          if isEditing {
+            Button(action: onSaveName) {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(.green)
+            }
+            .buttonStyle(.plain)
+          } else {
+            Button(action: onEdit) {
+              Image(systemName: "pencil.circle")
+                .foregroundColor(.blue)
+            }
+            .buttonStyle(.plain)
+          }
+          
+          Button(action: onChange) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+              .foregroundColor(.orange)
+          }
+          .buttonStyle(.plain)
+          .help("Change file path")
+          
+          Button(action: onRemove) {
+            Image(systemName: "trash.circle.fill")
+              .foregroundColor(.red)
+          }
+          .buttonStyle(.plain)
+          .help("Remove data source")
+        }
+      }
+      
+      if !source.isEnabled {
+        HStack {
+          Image(systemName: "info.circle")
+            .foregroundColor(.orange)
+            .font(.caption)
+          Text("This data source is disabled and will not be included in calculations")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+      }
+    }
+    .padding(12)
+    .background(source.isEnabled ? Color.green.opacity(0.05) : Color.gray.opacity(0.05))
+    .cornerRadius(8)
   }
 }
 

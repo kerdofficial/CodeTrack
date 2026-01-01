@@ -28,6 +28,6 @@ struct ConfigurationAppIntent: WidgetConfigurationIntent {
   @Parameter(title: "View Type", default: .grid)
   var viewType: WidgetViewType
   
-  @Parameter(title: "Days to Show", default: 90)
+  @Parameter(title: "Days to Show", default: 60)
   var daysToShow: Int
 }
